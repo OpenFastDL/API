@@ -426,3 +426,4 @@ FodyWeavers.xsd
 appsettings.json
 appsettings.Development.json
 appsettings.Production.json
+*.ps1
