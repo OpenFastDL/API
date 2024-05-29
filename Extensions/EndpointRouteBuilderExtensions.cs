@@ -1,5 +1,7 @@
 ﻿using System.Buffers.Binary;
+using System.Net;
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -7,15 +9,15 @@ namespace OpenFastDL.Api;
 
 public static class EndpointRouteBuilderExtensions
 {
-    public static IEndpointRouteBuilder MapOidEndpoints(this IEndpointRouteBuilder builder, string route = "/oids/{oid}")
+    public static IEndpointRouteBuilder MapOidEndpoints(this IEndpointRouteBuilder builder, string routeBase = "/oids")
     {
-        builder.MapGet(route, GetOidAsync)
+        builder.MapGet($"{routeBase}/{{oid}}", GetOidAsync)
             .AddEndpointFilter<ApiKeyEndpointFilter>();
         
-        builder.MapPut(route, PutOidAsync)
+        builder.MapPut(routeBase, PutOidsAsync)
             .AddEndpointFilter<ApiKeyEndpointFilter>();
         
-        builder.MapDelete(route, DeleteOidAsync)
+        builder.MapDelete($"{routeBase}/{{oid}}", DeleteOidAsync)
             .AddEndpointFilter<ApiKeyEndpointFilter>();
 
         return builder;
@@ -29,15 +31,26 @@ public static class EndpointRouteBuilderExtensions
                 : Results.NotFound();
         }
         
-        static async Task<IResult> PutOidAsync(HttpContext context,
+        static async Task<IResult> PutOidsAsync(HttpContext context,
             [FromServices] DatabaseContext db,
-            string oid,
-            [FromBody] CreateRemoteFileDTO file)
+            [FromBody] CreateRemoteFilesDTO dto)
         {
-            if (await db.Files.AnyAsync(x => x.Id == oid))
-                return Results.Conflict();
+            if (dto.Files.Count == 0)
+                return Results.BadRequest(ErrorResponseDTO.BadRequest("No remote file data supplied"));
             
-            db.Files.Add(new RemoteFile(oid, file.Size, file.RelativePath));
+            var existingFiles = await db.Files.ToListAsync();
+
+            foreach (var (id, file) in dto.Files)
+            {
+                if (existingFiles.FirstOrDefault(x => x.Id == id) is { } existingId)
+                    return Results.Conflict(ErrorResponseDTO.Conflict($"OID {id} already exists (path {existingId.RelativePath})"));
+
+                if (existingFiles.FirstOrDefault(x => x.RelativePath == file.Path) is { } existingPath)
+                    return Results.Conflict(ErrorResponseDTO.Conflict($"Path {file.Path} exists (OID: {existingPath.Id})"));
+
+                db.Files.Add(new RemoteFile(id, file.Size, file.Path));
+            }
+
             await db.SaveChangesAsync();
             return Results.NoContent();
         }
